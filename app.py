@@ -1,6 +1,8 @@
 import streamlit as st
 from google import genai
 from google.genai import types
+from streamlit_mic_recorder import mic_recorder
+import io
 
 st.set_page_config(page_title="Heksagon Sales Trainer", page_icon="📞", layout="centered")
 
@@ -30,7 +32,7 @@ PROFIL KLIENTA: {profile}
 SCENARIUSZ: {scenario}
 
 ZASADY ODGRYWANIA ROLI:
-1. Odpowiadaj krótko i naturalnie (1-3 zdania), tak jak człowiek przez telefon.
+1. Odpowiadaj krótko i naturalnie (1-3 zdania), dokładnie tak jak człowiek rozmawiający przez telefon.
 2. Reaguj na styl doradcy:
    - Jeśli doradca mówi twierdzeniami, poucza Cię lub próbuje udowadniać rację (np. z RODO) -> wpadaj w 'tryb awaryjny' (bądź chłodny, zamykaj się lub atakuj).
    - Jeśli doradca zadaje empatyczne pytania, przeprasza za zły moment, używa humoru, parafrazy i szanuje Twój czas -> otwieraj się stopniowo.
@@ -75,12 +77,41 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# --- POLE ROZMOWY ---
-if prompt := st.chat_input("Napisz co mówisz do klienta..."):
-    # Zapisz wypowiedź doradcy
-    st.session_state.messages.append({"role": "user", "content": prompt})
+# --- SEKCJA WEJŚCIA GŁOSOWEGO I TEKSTOWEGO ---
+st.write("🎤 **Powiedz coś do klienta lub napisz:**")
+
+col1, col2 = st.columns([1, 4])
+with col1:
+    audio_record = mic_recorder(
+        start_prompt="🔴 Nagraj",
+        stop_prompt="⏹️ Wyślij",
+        key="recorder"
+    )
+
+prompt_text = st.chat_input("LUB napisz tutaj co mówisz do klienta...")
+
+# Przetworzenie wejścia (głosowego lub tekstowego)
+user_input_text = None
+
+if audio_record and "bytes" in audio_record and audio_record["bytes"]:
+    # Przesłanie pliku audio do transkrypcji przez Gemini
+    audio_bytes = audio_record["bytes"]
+    with st.spinner("Przetwarzanie Twojego głosu..."):
+        audio_part = types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
+        transcribe_resp = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[audio_part, "Przepisz dokładnie wypowiedź po polsku. Zwróć tylko sam transkrybowany tekst bez żadnych komentarzy."]
+        )
+        user_input_text = transcribe_resp.text.strip()
+
+elif prompt_text:
+    user_input_text = prompt_text.strip()
+
+# Jeśli pojawiła się nowa wypowiedź
+if user_input_text:
+    st.session_state.messages.append({"role": "user", "content": user_input_text})
     with st.chat_message("user"):
-        st.write(prompt)
+        st.write(user_input_text)
 
     # Budowanie historii do Gemini
     contents = []
@@ -88,7 +119,6 @@ if prompt := st.chat_input("Napisz co mówisz do klienta..."):
         role = "user" if m["role"] == "user" else "model"
         contents.append(types.Content(role=role, parts=[types.Part.from_text(text=m["content"])]))
 
-    # Odpowiedź klienta
     with st.chat_message("assistant"):
         response = client.models.generate_content(
             model='gemini-2.5-flash',
