@@ -80,7 +80,7 @@ for msg in st.session_state.messages:
         st.write(msg["content"])
 
 # --- NAGRYWANIE GŁOSOWE I CZAT ---
-st.write("🎤 **Kliknij mikrofon, aby powiedzieć do klienta:**")
+st.write("🎤 **Naciśnij ikonę mikrofonu, powiedz kwestię i naciśnij ponownie:**")
 audio_bytes = audio_recorder(
     text="",
     recording_color="#e74c3c",
@@ -96,12 +96,24 @@ user_input = None
 if audio_bytes and audio_bytes != st.session_state.last_audio_bytes:
     st.session_state.last_audio_bytes = audio_bytes
     with st.spinner("Przetwarzanie głosu..."):
-        audio_part = types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
-        transcribe_resp = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[audio_part, "Przepisz dokładnie wypowiedź w języku polskim. Zwróć wyłącznie sam tekst."]
-        )
-        user_input = transcribe_resp.text.strip()
+        try:
+            # Sprawdzenie nagłówka pliku dla iOS (Safari) vs inne przeglądarki
+            mime_type = "audio/wav"
+            if audio_bytes.startswith(b'RIFF'):
+                mime_type = "audio/wav"
+            elif audio_bytes.startswith(b'\x1a\x45\xdf\xa3'):
+                mime_type = "audio/webm"
+            elif b'ftyp' in audio_bytes[:20] or audio_bytes.startswith(b'\xff\xf1') or audio_bytes.startswith(b'\xff\xf9'):
+                mime_type = "audio/mp4"
+
+            audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
+            transcribe_resp = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[audio_part, "Zwróć dokładnie samą transkrypcję tej wypowiedzi po polsku. Bez żadnych dodatkowych słów ani komentarzy."]
+            )
+            user_input = transcribe_resp.text.strip()
+        except Exception as e:
+            st.error(f"Nie udało się przetworzyć nagrania. Spróbuj powtórzyć lub wpisać tekst.")
 
 elif prompt_text:
     user_input = prompt_text.strip()
