@@ -1,7 +1,7 @@
 import streamlit as st
 from google import genai
 from google.genai import types
-from streamlit_mic_recorder import mic_recorder
+from audio_recorder_streamlit import audio_recorder
 
 st.set_page_config(page_title="Heksagon Sales Trainer", page_icon="📞", layout="centered")
 
@@ -60,7 +60,7 @@ scenario = st.sidebar.selectbox(
 if st.sidebar.button("🔄 Nowa rozmowa / Reset"):
     st.session_state.messages = []
     st.session_state.feedback = None
-    st.session_state.audio_processed = False
+    st.session_state.last_audio_bytes = None
     st.rerun()
 
 # --- INICJALIZACJA STANU ---
@@ -68,51 +68,48 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "feedback" not in st.session_state:
     st.session_state.feedback = None
-if "last_audio_id" not in st.session_state:
-    st.session_state.last_audio_id = None
+if "last_audio_bytes" not in st.session_state:
+    st.session_state.last_audio_bytes = None
 
 st.title("📞 Trenażer Sprzedaży Naturalnej")
 st.caption(f"Klient: **{profile}** | Scenariusz: **{scenario}**")
 
-# --- HISTORIA CZATU ---
+# --- HISTORIA ROZMOWY ---
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# --- PANEL WEJŚCIOWY ---
-st.write("🎤 **Nagraj wypowiedź głosową:**")
-audio_record = mic_recorder(
-    start_prompt="🔴 Rozpocznij nagrywanie",
-    stop_prompt="⏹️ Zakończ i wyślij",
-    key="sales_mic_recorder"
+# --- NAGRYWANIE GŁOSOWE I CZAT ---
+st.write("🎤 **Kliknij mikrofon, aby powiedzieć do klienta:**")
+audio_bytes = audio_recorder(
+    text="",
+    recording_color="#e74c3c",
+    neutral_color="#3498db",
+    icon_name="microphone",
+    icon_size="2x"
 )
 
-prompt_text = st.chat_input("LUB napisz tutaj co mówisz do klienta...")
+prompt_text = st.chat_input("LUB wpisz tutaj wypowiedź...")
 
-user_input_text = None
+user_input = None
 
-# Obsługa nagrania audio
-if audio_record and "bytes" in audio_record and audio_record["bytes"]:
-    # Unikanie podwójnego przetwarzania tego samego nagrania
-    current_audio_id = hash(audio_record["bytes"])
-    if current_audio_id != st.session_state.last_audio_id:
-        st.session_state.last_audio_id = current_audio_id
-        with st.spinner("Przetwarzanie Twojej wypowiedzi..."):
-            audio_part = types.Part.from_bytes(data=audio_record["bytes"], mime_type="audio/wav")
-            transcribe_resp = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=[audio_part, "Przepisz dokładnie wypowiedź w języku polskim. Zwróć tylko sam tekst."]
-            )
-            user_input_text = transcribe_resp.text.strip()
+if audio_bytes and audio_bytes != st.session_state.last_audio_bytes:
+    st.session_state.last_audio_bytes = audio_bytes
+    with st.spinner("Przetwarzanie głosu..."):
+        audio_part = types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
+        transcribe_resp = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[audio_part, "Przepisz dokładnie wypowiedź w języku polskim. Zwróć wyłącznie sam tekst."]
+        )
+        user_input = transcribe_resp.text.strip()
 
 elif prompt_text:
-    user_input_text = prompt_text.strip()
+    user_input = prompt_text.strip()
 
-# Wysłanie wiadomości do modelu
-if user_input_text:
-    st.session_state.messages.append({"role": "user", "content": user_input_text})
+if user_input:
+    st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
-        st.write(user_input_text)
+        st.write(user_input)
 
     contents = []
     for m in st.session_state.messages:
@@ -132,7 +129,7 @@ if user_input_text:
         st.write(reply)
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
-# --- FEEDBACK ---
+# --- FEEDBACK MENTORA ---
 if len(st.session_state.messages) >= 2:
     st.divider()
     if st.button("📊 Zakończ rozmowę i wygeneruj Feedback Mentora"):
