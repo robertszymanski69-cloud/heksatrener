@@ -2,7 +2,6 @@ import streamlit as st
 from google import genai
 from google.genai import types
 from streamlit_mic_recorder import mic_recorder
-import io
 
 st.set_page_config(page_title="Heksagon Sales Trainer", page_icon="📞", layout="centered")
 
@@ -61,6 +60,7 @@ scenario = st.sidebar.selectbox(
 if st.sidebar.button("🔄 Nowa rozmowa / Reset"):
     st.session_state.messages = []
     st.session_state.feedback = None
+    st.session_state.audio_processed = False
     st.rerun()
 
 # --- INICJALIZACJA STANU ---
@@ -68,52 +68,52 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "feedback" not in st.session_state:
     st.session_state.feedback = None
+if "last_audio_id" not in st.session_state:
+    st.session_state.last_audio_id = None
 
 st.title("📞 Trenażer Sprzedaży Naturalnej")
 st.caption(f"Klient: **{profile}** | Scenariusz: **{scenario}**")
 
-# --- WYŚWIETLANIE HISTORII ---
+# --- HISTORIA CZATU ---
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# --- SEKCJA WEJŚCIA GŁOSOWEGO I TEKSTOWEGO ---
-st.write("🎤 **Powiedz coś do klienta lub napisz:**")
-
-col1, col2 = st.columns([1, 4])
-with col1:
-    audio_record = mic_recorder(
-        start_prompt="🔴 Nagraj",
-        stop_prompt="⏹️ Wyślij",
-        key="recorder"
-    )
+# --- PANEL WEJŚCIOWY ---
+st.write("🎤 **Nagraj wypowiedź głosową:**")
+audio_record = mic_recorder(
+    start_prompt="🔴 Rozpocznij nagrywanie",
+    stop_prompt="⏹️ Zakończ i wyślij",
+    key="sales_mic_recorder"
+)
 
 prompt_text = st.chat_input("LUB napisz tutaj co mówisz do klienta...")
 
-# Przetworzenie wejścia (głosowego lub tekstowego)
 user_input_text = None
 
+# Obsługa nagrania audio
 if audio_record and "bytes" in audio_record and audio_record["bytes"]:
-    # Przesłanie pliku audio do transkrypcji przez Gemini
-    audio_bytes = audio_record["bytes"]
-    with st.spinner("Przetwarzanie Twojego głosu..."):
-        audio_part = types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
-        transcribe_resp = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[audio_part, "Przepisz dokładnie wypowiedź po polsku. Zwróć tylko sam transkrybowany tekst bez żadnych komentarzy."]
-        )
-        user_input_text = transcribe_resp.text.strip()
+    # Unikanie podwójnego przetwarzania tego samego nagrania
+    current_audio_id = hash(audio_record["bytes"])
+    if current_audio_id != st.session_state.last_audio_id:
+        st.session_state.last_audio_id = current_audio_id
+        with st.spinner("Przetwarzanie Twojej wypowiedzi..."):
+            audio_part = types.Part.from_bytes(data=audio_record["bytes"], mime_type="audio/wav")
+            transcribe_resp = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[audio_part, "Przepisz dokładnie wypowiedź w języku polskim. Zwróć tylko sam tekst."]
+            )
+            user_input_text = transcribe_resp.text.strip()
 
 elif prompt_text:
     user_input_text = prompt_text.strip()
 
-# Jeśli pojawiła się nowa wypowiedź
+# Wysłanie wiadomości do modelu
 if user_input_text:
     st.session_state.messages.append({"role": "user", "content": user_input_text})
     with st.chat_message("user"):
         st.write(user_input_text)
 
-    # Budowanie historii do Gemini
     contents = []
     for m in st.session_state.messages:
         role = "user" if m["role"] == "user" else "model"
@@ -132,7 +132,7 @@ if user_input_text:
         st.write(reply)
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
-# --- PRZYCISK FEEDBACKU ---
+# --- FEEDBACK ---
 if len(st.session_state.messages) >= 2:
     st.divider()
     if st.button("📊 Zakończ rozmowę i wygeneruj Feedback Mentora"):
