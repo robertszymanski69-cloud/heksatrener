@@ -1,7 +1,6 @@
 import streamlit as st
 from google import genai
 from google.genai import types
-from audio_recorder_streamlit import audio_recorder
 
 st.set_page_config(page_title="Heksagon Sales Trainer", page_icon="📞", layout="centered")
 
@@ -38,7 +37,7 @@ ZASADY ODGRYWANIA ROLI:
 3. Nigdy nie wychodź z roli klienta dopóki rozmowa trwa. Nie udzielaj instrukcji użytkownikowi.
 """
 
-# --- SIDEBAR: WYBÓR PARAMETRÓW ---
+# --- SIDEBAR: USTAWIENIA ---
 st.sidebar.title("🎯 Ustawienia Treningu")
 
 profile = st.sidebar.selectbox(
@@ -60,7 +59,6 @@ scenario = st.sidebar.selectbox(
 if st.sidebar.button("🔄 Nowa rozmowa / Reset"):
     st.session_state.messages = []
     st.session_state.feedback = None
-    st.session_state.last_audio_bytes = None
     st.rerun()
 
 # --- INICJALIZACJA STANU ---
@@ -68,60 +66,23 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "feedback" not in st.session_state:
     st.session_state.feedback = None
-if "last_audio_bytes" not in st.session_state:
-    st.session_state.last_audio_bytes = None
 
 st.title("📞 Trenażer Sprzedaży Naturalnej")
-st.caption(f"Klient: **{profile}** | Scenariusz: **{scenario}**")
+st.caption(f"Rozmówca: **{profile}** | Scenariusz: **{scenario}**")
+
+# Wskazówka mobilna
+st.info("💡 **Wskazówka na telefonie:** Kliknij w poniższe pole i naciśnij **ikonę mikrofonu na klawiaturze iPhone'a** (obok spacji), aby dyktować wypowiedź głosem.")
 
 # --- HISTORIA ROZMOWY ---
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# --- NAGRYWANIE GŁOSOWE I CZAT ---
-st.write("🎤 **Naciśnij ikonę mikrofonu, powiedz kwestię i naciśnij ponownie:**")
-audio_bytes = audio_recorder(
-    text="",
-    recording_color="#e74c3c",
-    neutral_color="#3498db",
-    icon_name="microphone",
-    icon_size="2x"
-)
-
-prompt_text = st.chat_input("LUB wpisz tutaj wypowiedź...")
-
-user_input = None
-
-if audio_bytes and audio_bytes != st.session_state.last_audio_bytes:
-    st.session_state.last_audio_bytes = audio_bytes
-    with st.spinner("Przetwarzanie głosu..."):
-        try:
-            # Sprawdzenie nagłówka pliku dla iOS (Safari) vs inne przeglądarki
-            mime_type = "audio/wav"
-            if audio_bytes.startswith(b'RIFF'):
-                mime_type = "audio/wav"
-            elif audio_bytes.startswith(b'\x1a\x45\xdf\xa3'):
-                mime_type = "audio/webm"
-            elif b'ftyp' in audio_bytes[:20] or audio_bytes.startswith(b'\xff\xf1') or audio_bytes.startswith(b'\xff\xf9'):
-                mime_type = "audio/mp4"
-
-            audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
-            transcribe_resp = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=[audio_part, "Zwróć dokładnie samą transkrypcję tej wypowiedzi po polsku. Bez żadnych dodatkowych słów ani komentarzy."]
-            )
-            user_input = transcribe_resp.text.strip()
-        except Exception as e:
-            st.error(f"Nie udało się przetworzyć nagrania. Spróbuj powtórzyć lub wpisać tekst.")
-
-elif prompt_text:
-    user_input = prompt_text.strip()
-
-if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
+# --- POLE ROZMOWY ---
+if prompt := st.chat_input("Kliknij mikrofon na klawiaturze telefonu lub wpisz tekst..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
-        st.write(user_input)
+        st.write(prompt)
 
     contents = []
     for m in st.session_state.messages:
